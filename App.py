@@ -71,6 +71,16 @@ ROW_PIECES_GW_VOL_PAT = re.compile(
     r"(?:\s+Pieces\s*[:\-]?\s*(\d+))?", re.I
 )
 
+# NEW FALLBACK: Pattern for Gross Weight if not on the main line
+GROSS_WEIGHT_PAT = re.compile(
+    r"(?:Gross\s+Weight|G\.W\.)\s*[:\-]?\s*([\d,.]+)\s*(KG|KGS?|LB)", re.I
+)
+
+# NEW FALLBACK: Pattern for Volume if not on the main line
+VOLUME_PAT = re.compile(
+    r"Volume\s*[:\-]?\s*([\d,.]+)\s*(M3|CBM)", re.I
+)
+
 # MODIFIED: Pattern for chargeable weight (making 'CHARGEABLE' optional)
 CHARGEABLE_KG_PAT = re.compile(
     r"CH(?:ARGEABLE)?\.?\s*W(?:EIGHT)?\s*[:\-]?\s*([\d,.]+)\s*(KG|KGS?|LB|M3|CBM)", re.I
@@ -108,7 +118,7 @@ def parse_invoice_pdf_bytes(data: bytes, filename: str) -> Optional[Dict[str, An
             # Extract text from all pages
             text = "\n".join(p.extract_text() or "" for p in pdf.pages)
 
-        # --- 1. Invoice Date and Number (Primary source from the new format) ---
+        # --- 1. Invoice Date and Number ---
         inv_date = None
         invoice_no_from_content = None
         m = INV_NO_DATE_PAT.search(text)
@@ -141,6 +151,8 @@ def parse_invoice_pdf_bytes(data: bytes, filename: str) -> Optional[Dict[str, An
 
         # --- 4. Weight, Volume, Pieces ---
         w_kg = v_m3 = pieces = None
+        
+        # Primary search for weight/volume/pieces on a single line
         m = ROW_PIECES_GW_VOL_PAT.search(text)
         if m:
             w, v, p = m.groups()
@@ -148,6 +160,19 @@ def parse_invoice_pdf_bytes(data: bytes, filename: str) -> Optional[Dict[str, An
             v_m3 = _f(v)
             if p:
                 pieces = int(p)
+        
+        # Fallback search for Gross Weight
+        if w_kg is None:
+            m = GROSS_WEIGHT_PAT.search(text)
+            if m:
+                val, unit = m.groups()
+                w_kg = _to_kg(_f(val), unit) # Handles conversion if unit is LB
+
+        # Fallback search for Volume
+        if v_m3 is None:
+            m = VOLUME_PAT.search(text)
+            if m:
+                v_m3 = _f(m.group(1))
 
         # A fallback pattern for Pieces (if not in the main row)
         if pieces is None:
@@ -168,7 +193,6 @@ def parse_invoice_pdf_bytes(data: bytes, filename: str) -> Optional[Dict[str, An
 
 
         # --- 6. Freight Mode and Amount (Priority given to AIRFREIGHT CHARGE) ---
-        # This captures the *main* freight line item (879.20 USD) for the Freight_amount column.
         f_mode = f_amount = None
 
         m_air_charge = AIRFREIGHT_CHARGE_LINE.search(text)
@@ -195,9 +219,9 @@ def parse_invoice_pdf_bytes(data: bytes, filename: str) -> Optional[Dict[str, An
             "Chargeable_KG": c_kg,
             "Chargeable_CBM": c_cbm,
             "Pieces": pieces,
-            "Subtotal": subtotal, # This should be the final amount (1,183.96 USD)
+            "Subtotal": subtotal,
             "Freight_Mode": f_mode,
-            "Freight_amount": f_amount, # This should be the main line item amount (879.20 USD)
+            "Freight_amount": f_amount,
         }
     except Exception:
         # Print stack trace to Streamlit console for debugging
