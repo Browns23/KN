@@ -1,4 +1,6 @@
 streamlit
 pandas
-pdfplumber
 openpyxl
+pdf2image
+easyocr
+torch
