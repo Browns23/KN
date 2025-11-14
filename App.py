@@ -65,20 +65,31 @@ SHIPPER_PAT = re.compile(
 )
 
 # Pattern for pieces, gross weight (GW) and volume (VOL)
+# Primary search: looks for all three on a single line
 ROW_PIECES_GW_VOL_PAT = re.compile(
     r"(?:Gross Weight|G\.?\s*W\.?\s*K?\.?)\s*[:\-]?\s*([\d,.]+)\s*KGS?"
     r"\s+Volume\s*[:\-]?\s*([\d,.]+)\s+M3"
     r"(?:\s+Pieces\s*[:\-]?\s*(\d+))?", re.I
 )
 
-# NEW FALLBACK: Pattern for Gross Weight if not on the main line
+# FALLBACK 1: Specific labeled Gross Weight
 GROSS_WEIGHT_PAT = re.compile(
     r"(?:Gross\s+Weight|G\.W\.)\s*[:\-]?\s*([\d,.]+)\s*(KG|KGS?|LB)", re.I
 )
 
-# NEW FALLBACK: Pattern for Volume if not on the main line
+# FALLBACK 1: Specific labeled Volume
 VOLUME_PAT = re.compile(
     r"Volume\s*[:\-]?\s*([\d,.]+)\s*(M3|CBM)", re.I
+)
+
+# FALLBACK 2 (LOOSE): Matches X.XX KG/KGS/LB anywhere
+LOOSE_WEIGHT_PAT = re.compile(
+    r"([\d,]+\.\d+)\s*(KG|KGS?|LB)\b", re.I
+)
+
+# FALLBACK 2 (LOOSE): Matches X.XX M3/CBM anywhere
+LOOSE_VOLUME_PAT = re.compile(
+    r"([\d,]+\.\d+)\s*(M3|CBM)\b", re.I
 )
 
 # MODIFIED: Pattern for chargeable weight (making 'CHARGEABLE' optional)
@@ -161,18 +172,32 @@ def parse_invoice_pdf_bytes(data: bytes, filename: str) -> Optional[Dict[str, An
             if p:
                 pieces = int(p)
         
-        # Fallback search for Gross Weight
+        # Fallback 1: Specific labeled search for Gross Weight
         if w_kg is None:
             m = GROSS_WEIGHT_PAT.search(text)
             if m:
                 val, unit = m.groups()
                 w_kg = _to_kg(_f(val), unit) # Handles conversion if unit is LB
 
-        # Fallback search for Volume
+        # Fallback 1: Specific labeled search for Volume
         if v_m3 is None:
             m = VOLUME_PAT.search(text)
             if m:
                 v_m3 = _f(m.group(1))
+        
+        # Fallback 2 (LOOSE): Capture weight if specific patterns failed
+        if w_kg is None:
+            m = LOOSE_WEIGHT_PAT.search(text)
+            if m:
+                val, unit = m.groups()
+                w_kg = _to_kg(_f(val), unit)
+        
+        # Fallback 2 (LOOSE): Capture volume if specific patterns failed
+        if v_m3 is None:
+            m = LOOSE_VOLUME_PAT.search(text)
+            if m:
+                v_m3 = _f(m.group(1))
+
 
         # A fallback pattern for Pieces (if not in the main row)
         if pieces is None:
